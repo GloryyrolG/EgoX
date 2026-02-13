@@ -43,8 +43,9 @@ def main(args):
         ego_prior_videos.append(meta['ego_prior_path'])
         prompts.append(meta['prompt'])
         take_name = exo_videos[-1].split('/')[-2]
-        depth_root = "/".join(meta['exo_path'].split('/')[:3])
-        depth_map_paths.append(Path(os.path.join(depth_root, 'depth_maps', take_name)))
+        # depth_root = "/".join(meta['exo_path'].split('/')[:3])
+        # depth_map_paths.append(Path(os.path.join(depth_root, 'depth_maps', take_name)))
+        depth_map_paths.append(Path(meta['exo_path'].replace('videos', 'depth_maps')).parent)
         camera_extrinsics.append(meta['camera_extrinsics'])
         camera_intrinsics.append(meta['camera_intrinsics'])
         ego_extrinsics.append(meta['ego_extrinsics'])
