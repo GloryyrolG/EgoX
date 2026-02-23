@@ -41,36 +41,37 @@ def generate_video(
     exo_video = load_video(video=exo_video_path)
     ego_prior_video = load_video(video=ego_prior_video_path)
 
+    # Calculate target dimensions based on input parameters
+    # If width and height are provided, use them; otherwise infer from videos
+    if width is None or height is None:
+        # Fallback: use first frame to infer dimensions
+        exo_first_frame = exo_video[0] if exo_video else None
+        ego_prior_first_frame = ego_prior_video[0] if ego_prior_video else None
+        if exo_first_frame and ego_prior_first_frame:
+            exo_width, exo_height = exo_first_frame.size
+            ego_width, ego_height = ego_prior_first_frame.size
+            assert exo_height == ego_height
+            width = exo_width + ego_width
+            height = exo_height
+        else:
+            raise ValueError("Cannot infer video dimensions. Please provide width and height.")
+    else:
+        # Use provided dimensions
+        exo_width = width - height  # exo_width = total_width - ego_width
+        ego_width = height  # ego_width = height
+    
+    # Resize videos to target dimensions
     cropped_exo_video = []
     for img in exo_video:
-        width, height = img.size
-        cropped_img = img.crop((0, 0, width, height))
-        cropped_img = cropped_img.resize((784, 448))
+        cropped_img = img.resize((exo_width, height))
         cropped_exo_video.append(cropped_img)
     exo_video = cropped_exo_video
 
     cropped_ego_prior_video = []
     for img in ego_prior_video:
-        width, height = img.size
-        cropped_img = img.crop((0, 0, width, height))
+        cropped_img = img.resize((ego_width, height))
         cropped_ego_prior_video.append(cropped_img)
-
-    cropped_ego_prior_video = []
-    for img in ego_prior_video:
-        width, height = img.size
-        cropped_img = img.crop((0, 0, width, height))
-        cropped_ego_prior_video.append(cropped_img)
-
     ego_prior_video = cropped_ego_prior_video
-    exo_first_frame = exo_video[0] if exo_video else None
-    ego_prior_first_frame = ego_prior_video[0] if ego_prior_video else None
-
-
-    exo_width, exo_height = exo_first_frame.size
-    ego_width, ego_height = ego_prior_first_frame.size
-    assert exo_height == ego_height
-    width = exo_width + ego_width
-    height = exo_height
 
     video_generate = pipe(
         height=height,

@@ -74,7 +74,8 @@ class Args(BaseModel):
     rank: int = 128
     lora_alpha: int = 64
     target_modules: List[str] = ["to_q", "to_k", "to_v", "to_out.0"]
-    
+    initial_lora_path: Path | None = None  # load this LoRA before training (e.g. official EgoX); dir or .safetensors file
+
     gen_fps: int = 15
 
     @field_validator("train_resolution")
@@ -171,6 +172,7 @@ class Args(BaseModel):
         parser.add_argument("--rank", type=int, default=128)
         parser.add_argument("--lora_alpha", type=int, default=64)
         parser.add_argument("--target_modules", type=str, nargs="+", default=["to_q", "to_k", "to_v", "to_out.0"])
+        parser.add_argument("--initial_lora_path", type=str, default=None, help="Load this LoRA before training (e.g. official EgoX). Dir or .safetensors path. Rank/alpha must match.")
 
         # Checkpointing
         parser.add_argument("--checkpointing_steps", type=int, default=200)
@@ -196,5 +198,8 @@ class Args(BaseModel):
         # Convert video_resolution_buckets string to list of tuples
         frames, height, width = args.train_resolution.split("x")
         args.train_resolution = (int(frames), int(height), int(width))
+        if getattr(args, "initial_lora_path", None):
+            raw = str(args.initial_lora_path).strip()
+            args.initial_lora_path = Path(raw) if raw else None
 
         return cls(**vars(args))

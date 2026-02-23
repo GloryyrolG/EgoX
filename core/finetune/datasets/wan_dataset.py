@@ -70,30 +70,62 @@ class BaseWanDataset(Dataset):
 
         data_root = Path(data_root)
 
-        meta_data = load_from_json_file(meta_data_file)
+        raw_meta = load_from_json_file(meta_data_file)
+        # Support both formats: (1) infer/README format with "test_datasets" list,
+        # (2) legacy dict keyed by ego_filename (exo_video_path, ego_video_path, etc.)
+        if isinstance(raw_meta, dict) and "test_datasets" in raw_meta:
+            meta_list = raw_meta["test_datasets"]
+        elif isinstance(raw_meta, dict):
+            meta_list = list(raw_meta.values())
+        else:
+            meta_list = raw_meta
+
         self.exo_videos = []
         self.ego_gt_videos = []
         self.ego_prior_videos = []
+        self.prompts = []
         self.depth_map_paths = []
-        self.depth_intrinsics = []
+        self.depth_intrinsics = []  # Path to .npz or None to use camera_intrinsics from meta?
         self.camera_extrinsics = []
         self.camera_intrinsics = []
         self.ego_extrinsics = []
         self.ego_intrinsics = []
 
-        for ego_filename, meta in meta_data.items():
-            
-            self.exo_videos.append(Path(os.path.join(meta['exo_video_path']))) #! dohyeon data
-            self.ego_gt_videos.append(Path(os.path.join(meta['ego_video_path']))) #! Same but width wise concated
-            self.ego_prior_videos.append(Path(os.path.join(meta['ego_prior_path']))) #! None
-            self.prompts.append(meta['prompt'])
-            
-            self.depth_map_paths.append(Path(os.path.join(data_root, 'depth_maps', meta['take_name'])))
-            self.depth_intrinsics.append(Path(os.path.join(meta['vipe_results_path'], 'intrinsics', meta['best_camera']+'.npz')))
-            self.camera_extrinsics.append(meta['camera_extrinsics'])
-            self.camera_intrinsics.append(meta['camera_intrinsics'])
-            self.ego_extrinsics.append(meta['ego_extrinsics'])
-            self.ego_intrinsics.append(meta['ego_intrinsics'])
+        for meta in meta_list:
+            # Field names: infer/README use exo_path, ego_prior_path; legacy uses exo_video_path, ego_video_path; H2O uses ego_path
+            exo_path_str = meta.get("exo_video_path") or meta.get("exo_path")
+            ego_gt_path_str = (
+                meta.get("ego_video_path") or meta.get("ego_path") or exo_path_str.replace("exo", "ego")
+            )  # fallback to prior when no GT
+
+            self.exo_videos.append(Path(exo_path_str))
+            self.ego_gt_videos.append(Path(ego_gt_path_str))
+            self.ego_prior_videos.append(Path(meta["ego_prior_path"]))
+            self.prompts.append(meta["prompt"])
+
+            take_name = meta.get("take_name")
+            if take_name is not None:
+                self.depth_map_paths.append(Path(os.path.join(data_root, "depth_maps", take_name)))
+            else:
+                self.depth_map_paths.append(Path(exo_path_str.replace("videos", "depth_maps")).parent)
+                # Extract take_name from exo_path: .../videos/subject1_h1_0_cam0/exo.mp4 -> subject1_h1_0_cam0
+                take_name = Path(exo_path_str).parent.name
+
+            # depth_intrinsics: Camera intrinsics for depth map back-projection
+            # - In Ego-Exo4D preprocessing: ViPE runs on multiple exo camera views (cam01, cam02, ...)
+            # - best_camera: Selected camera ID (e.g., "cam01") based on rendering quality metrics
+            # - depth_intrinsics: Stored at vipe_results_path/intrinsics/{best_camera}.npz
+            # - Used with iproj_disp() to convert depth maps to 3D point clouds for GGA attention
+            # exo_path: ./EgoX-EgoPriorRenderer/processed/h2o/videos/subject1_h1_0_cam0/exo.mp4
+            # vs. vipe_path: ./EgoX-EgoPriorRenderer/vipe_results/subject1_h1_0_cam0/
+            vipe_path = meta.get("vipe_results_path") or Path('./EgoX-EgoPriorRenderer/vipe_results') / take_name
+            best_camera = meta.get("best_camera", "exo")
+            self.depth_intrinsics.append(Path(os.path.join(vipe_path, "intrinsics", best_camera + ".npz")))
+
+            self.camera_extrinsics.append(meta["camera_extrinsics"])
+            self.camera_intrinsics.append(meta["camera_intrinsics"])
+            self.ego_extrinsics.append(meta["ego_extrinsics"])
+            self.ego_intrinsics.append(meta["ego_intrinsics"])
 
         self.max_frames = max_frames
         
@@ -125,13 +157,10 @@ class BaseWanDataset(Dataset):
         while True:
             try:
                 ret = self.getitem(index)
-                if ret['video_metadata']['num_frames'] != 13: # if 49 frames, 1+(49-1)/4=13
-                    logger.warning(
-                        f"Dataset __getitem__: latent num_frames mismatch at index={index} -> "
-                        f"got={ret['video_metadata']['num_frames']} expected=13",
-                        main_process_only=False,
-                    )
-                    raise ValueError("Not enough frames")
+                # Note: num_frames validation removed to support different temporal resolutions
+                # For 49 frames: (49-1)/4 + 1 = 13 latent frames
+                # For 25 frames: (25-1)/4 + 1 = 7 latent frames
+                # The model will handle the actual frame count dynamically
                 break
             except Exception as e:
                 logger.warning(f"Dataset __getitem__ retry due to: {e} (index={index})", main_process_only=False)
@@ -209,10 +238,7 @@ class BaseWanDataset(Dataset):
             logger.info(f"Processing videos for {encoded_video_path} and {image_embedding_path}", main_process_only=False)
             
             # Load and process all videos once
-            if self.depth_map_paths is not None:
-                exo_video_tensor, _ = self.preprocess(exo_video, None, "exo")
-            else:
-                exo_video_tensor, _ = self.preprocess(exo_video, None, "exo")
+            exo_video_tensor, _ = self.preprocess(exo_video, None, "exo")
 
             try:
                 logger.info(
@@ -223,10 +249,7 @@ class BaseWanDataset(Dataset):
                 pass
             exo_video_tensor = self.video_transform(exo_video_tensor)
             
-            if self.depth_map_paths is not None:
-                ego_gt_video_tensor, _ = self.preprocess(ego_gt_video, None, "ego_gt")
-            else:
-                ego_gt_video_tensor, _ = self.preprocess(ego_gt_video, None, "ego_gt")
+            ego_gt_video_tensor, _ = self.preprocess(ego_gt_video, None, "ego_gt")
 
             try:
                 logger.info(
@@ -294,25 +317,30 @@ class BaseWanDataset(Dataset):
                 # 448, 1232
 
                 C, F, H, W = encoded_exo_ego_gt_video.shape
+                # F = latent frames (e.g. 13 for 49 pixel frames), not pixel frame count
                 exo_H, exo_W = H, W - H
                 W = H
-                # in depth_map_paths folder, iterate all npy files
+                vae_scale_factor_temporal = 2 ** sum(self.trainer.components.vae.config.temperal_downsample)
+                vae_scale_factor_spatial = 2 ** len(self.trainer.components.vae.config.temperal_downsample)
+                # Load only required depth map files: sample by temporal scale, take first F frames
+                all_depth_files = sorted(depth_map_path.glob("*.npy"))
+                sampled_indices = list(range(0, len(all_depth_files), vae_scale_factor_temporal))[:F]
                 depth_maps = []
-                for depth_map_file in sorted(depth_map_path.glob("*.npy")):
-                    depth_map = np.load(depth_map_file)
+                for idx in sampled_indices:
+                    depth_map = np.load(all_depth_files[idx])
                     depth_maps.append(torch.from_numpy(depth_map).unsqueeze(0))
                 depth_maps = torch.cat(depth_maps, dim=0) # [F, H, W]
                 ego_intrinsic=torch.tensor(ego_intrinsics)          #! (3,3)
-                ego_extrinsic=torch.tensor(ego_extrinsics)          #! (F, 3, 4)
+                ego_extrinsic=torch.tensor(ego_extrinsics)          #! (49, 3, 4) from meta
+                ego_extrinsic = ego_extrinsic[::vae_scale_factor_temporal][:F]
                 camera_extrinsics=torch.tensor(camera_extrinsics)   #! (3,4)
                 camera_intrinsics=torch.tensor(camera_intrinsics)   #! (3,3)
-
                 # make ego_extrinsic (f, 3, 4) to (f, 4, 4)
                 if ego_extrinsic.shape[1] == 3 and ego_extrinsic.shape[2] == 4:
                     ego_extrinsic = torch.cat([ego_extrinsic, torch.tensor([[[0, 0, 0, 1]]], dtype=ego_extrinsic.dtype).expand(ego_extrinsic.shape[0], -1, -1)], dim=1)
                 if camera_extrinsics.shape == (3, 4):
                     camera_extrinsics = torch.cat([torch.tensor(camera_extrinsics, dtype=ego_extrinsic.dtype), torch.tensor([[0, 0, 0, 1]], dtype=ego_extrinsic.dtype)], dim=0)
-                scale = 1/8
+                scale = 1.0 / vae_scale_factor_spatial
                 scaled_intrinsic = ego_intrinsic.clone()
                 scaled_intrinsic[0, 0] *= scale  # fx' = fx * s
                 scaled_intrinsic[1, 1] *= scale  # fy' = fy * s
@@ -328,7 +356,7 @@ class BaseWanDataset(Dataset):
                 cam_rays = cam_rays.view(H, W, 3)  # (H, W, 3)
                 cam_rays = cam_rays.unsqueeze(0).expand(F, -1, -1, -1)  # (F, H, W, 3)
                 cam_rays = cam_rays.reshape(F, H * W, 3)  # (F, H*W, 3)
-                cam_rays = cam_rays @ ego_extrinsic[::4, :3, :3].transpose(-1, -2) #! TODO: F : 49 -> 13
+                cam_rays = cam_rays @ ego_extrinsic[:, :3, :3].transpose(-1, -2)  # Already sampled above
 
                 cam_dirs = cam_rays  # (B, H*W, 3)
                 cam_dirs = cam_dirs / torch.norm(cam_dirs, dim=-1, keepdim=True)  # (B, H*W, 3)
@@ -336,7 +364,7 @@ class BaseWanDataset(Dataset):
                 cam_rays = cam_rays.view(F, H, W, 3)  # (B, H, W, 3)
 
                 depth_intrinsics_ = np.load(depth_intrinsics)
-                depth_intrinsics = depth_intrinsics_['data'][0:1,:] #! (3,3) 
+                depth_intrinsics = depth_intrinsics_['data'][0:1, :]  # (3,3)
 
                 disp_v, disp_u = torch.meshgrid(
                     torch.arange(depth_maps.shape[1], device=device).float(),
@@ -381,23 +409,22 @@ class BaseWanDataset(Dataset):
                 
                 ego_extrinsic_c2w = torch.linalg.inv(ego_extrinsic)
 
-                cam_origins = ego_extrinsic_c2w[::4, :3, 3].unsqueeze(1).expand(-1, exo_H * exo_W, -1)  # (B, H*W, 3)
-                cam_origins = cam_origins.view(F, exo_H, exo_W, 3)  # (B, H, W, 3)
+                cam_origins = ego_extrinsic_c2w[:, :3, 3].unsqueeze(1).expand(-1, exo_H * exo_W, -1)  # (F, H*W, 3), already sampled
+                cam_origins = cam_origins.view(F, exo_H, exo_W, 3)  # (F, H, W, 3)
 
                 #! get point map to ego_cam vectors
-                if point_map.size(0) != ego_extrinsic_c2w.size(0):
-                    min_size = min(point_map.size(0), ego_extrinsic_c2w.size(0))
-                    point_map = point_map[:min_size]
+                # Ensure point_map matches F dimension (already sampled depth_maps above)
+                assert point_map.size(0) == F
                 
                 point_vecs_per_frame = []
                 for i in range(cam_origins.size(0)):
-                    point_vec = point_map[::4] - cam_origins[i].unsqueeze(0)  #! [B, H, W, 3]
-                    point_vec = point_vec / torch.norm(point_vec, dim=-1, keepdim=True)  #! [B,H, W, 3]
+                    point_vec = point_map - cam_origins[i].unsqueeze(0)  #! [F, H, W, 3], already sampled
+                    point_vec = point_vec / torch.norm(point_vec, dim=-1, keepdim=True)  #! [F, H, W, 3]
                     point_vecs_per_frame.append(point_vec)
-                point_vecs_per_frame = torch.stack(point_vecs_per_frame, dim=0)  #! [B, B, H, W, 3]
+                point_vecs_per_frame = torch.stack(point_vecs_per_frame, dim=0)  #! [F, F, H, W, 3]
 
-                point_vecs = point_map[::4] - cam_origins #! [B, H, W, 3]
-                point_vecs = point_vecs / torch.norm(point_vecs, dim=-1, keepdim=True) #! [B, H, W, 3]
+                point_vecs = point_map - cam_origins  #! [F, H, W, 3], already sampled
+                point_vecs = point_vecs / torch.norm(point_vecs, dim=-1, keepdim=True)  #! [F, H, W, 3]
 
                 # Apply simple 90-degree rotation to fix image orientation
                 cam_rays = cam_rays @ torch.tensor([[0, 1, 0], [-1, 0, 0], [0, 0, 1]], device=cam_rays.device, dtype=cam_rays.dtype)  #! [B, H, W, 3]

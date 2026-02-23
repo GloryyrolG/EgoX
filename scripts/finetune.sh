@@ -6,10 +6,10 @@ export TOKENIZERS_PARALLELISM=false
 export MASTER_ADDR=localhost
 export MASTER_PORT=29501
 export NNODES=1
-export NUM_PROCESSES=4
+export NUM_PROCESSES=1  # 4
 
 export LAUNCHER="accelerate launch \
-    --config_file configs_acc/4gpu.yaml \
+    --config_file configs_acc/1gpu.yaml \
     --main_process_ip $MASTER_ADDR \
     --main_process_port $MASTER_PORT \
     --machine_rank 0 \
@@ -23,13 +23,13 @@ finetune.py \
     --model_name wan-i2v \
     --model_type wan-i2v \
     --training_type lora \
-    --rank 256 \
+    --rank 128 \
     --lora_alpha 256 \
     --output_dir ./results/EgoX \
     --report_to tensorboard \
-    --data_root ./dataset/train \
-    --meta_data_file ./dataset/train/meta_with_uid.json \
-    --train_resolution 49x448x1232 \
+    --data_root ./EgoX-EgoPriorRenderer/processed \
+    --meta_data_file ./EgoX-EgoPriorRenderer/processed/h2o/meta.json \
+    --train_resolution 25x256x704 \
     --train_epochs 150 \
     --seed 42 \
     --batch_size 1 \
@@ -44,6 +44,10 @@ finetune.py \
     --cos_sim_scaling_factor 1.0 \
 "
 # --resume_from_checkpoint ./results/EgoX/checkpoint-10000 \
+# --rank 256 \
+# --data_root ./dataset/train \
+# --meta_data_file ./dataset/train/meta_with_uid.json \
+# --train_resolution 49x448x1232 \
 
 export CMD="$LAUNCHER $PROGRAM"
 

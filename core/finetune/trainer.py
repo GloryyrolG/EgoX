@@ -87,8 +87,10 @@ class Trainer:
         self.state.using_deepspeed = self.accelerator.state.deepspeed_plugin is not None
 
     def _init_distributed(self):
-        logging_dir = Path(self.args.output_dir, "logs")
-        project_config = ProjectConfiguration(project_dir=self.args.output_dir, logging_dir=logging_dir)
+        # Use absolute path so TensorBoard logs are written reliably regardless of cwd
+        output_dir = Path(self.args.output_dir).resolve()
+        logging_dir = output_dir / "logs"
+        project_config = ProjectConfiguration(project_dir=str(output_dir), logging_dir=str(logging_dir))
         ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=False) # 원래 True였음
         init_process_group_kwargs = InitProcessGroupKwargs(
             backend="nccl", timeout=timedelta(seconds=self.args.nccl_timeout)
@@ -131,8 +133,10 @@ class Trainer:
 
     def _init_directories(self) -> None:
         if self.accelerator.is_main_process:
-            self.args.output_dir = Path(self.args.output_dir)
+            self.args.output_dir = Path(self.args.output_dir).resolve()
             self.args.output_dir.mkdir(parents=True, exist_ok=True)
+            # Ensure TensorBoard logging dir exists (Accelerate writes events here)
+            (self.args.output_dir / "logs").mkdir(parents=True, exist_ok=True)
 
     def check_setting(self) -> None:
         # Check for unload_list
@@ -244,6 +248,23 @@ class Trainer:
                     param.requires_grad_(True)
                     logger.info(f"Training {name} after adding LoRA")
 
+            if self.args.initial_lora_path is not None:
+                p = Path(self.args.initial_lora_path)
+                input_dir = p.parent if p.suffix == ".safetensors" or p.is_file() else p
+                input_dir = str(input_dir.resolve())
+                lora_state_dict = self.components.pipeline_cls.lora_state_dict(input_dir)
+                transformer_state_dict = {
+                    k.replace("transformer.", ""): v
+                    for k, v in lora_state_dict.items()
+                    if k.startswith("transformer.")
+                }
+                incompatible = set_peft_model_state_dict(
+                    self.components.transformer, transformer_state_dict, adapter_name="default"
+                )
+                if incompatible is not None and getattr(incompatible, "unexpected_keys", None):
+                    logger.warning(f"Initial LoRA load had unexpected keys: {incompatible.unexpected_keys}")
+                logger.info(f"Loaded initial LoRA from {input_dir} (rank/alpha must match: {self.args.rank}/{self.args.lora_alpha})")
+
         # Load components needed for training to GPU (except transformer), and cast them to the specified data type
         ignore_list = ["transformer"] + self.UNLOAD_LIST
         self.__move_components_to_device(dtype=weight_dtype, ignore_list=ignore_list)
@@ -332,8 +353,11 @@ class Trainer:
 
     def prepare_trackers(self) -> None:
         logger.info("Initializing trackers")
-
-        tracker_name = self.args.tracker_name or "finetrainers-experiment"
+        # Use timestamp so TB logdir has one folder per run (logs/YYYYMMDD_HHMMSS); no parent/child double entry
+        from datetime import datetime
+        tracker_name = self.args.tracker_name
+        if tracker_name == "finetrainer-cogvideo":
+            tracker_name = datetime.now().strftime("%Y%m%d_%H%M%S")
         # self.accelerator.init_trackers(tracker_name, config=self.args.model_dump())
         config = self.args.model_dump()
 

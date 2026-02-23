@@ -239,8 +239,6 @@ def preprocess_video_with_resize(
             return frames
     
     elif video_type == "exo_GGA":
-        height = 448
-        width = 796 + 448
         target_width = width - height  # exo_width
         video_reader = decord.VideoReader(uri=video_path.as_posix(), width=width, height=height)
         video_num_frames = len(video_reader)
@@ -253,23 +251,20 @@ def preprocess_video_with_resize(
             num_repeats = max_num_frames - video_num_frames
             repeated_frames = last_frame.repeat(num_repeats, 1, 1, 1)
             frames = torch.cat([frames, repeated_frames], dim=0)
-            frames = frames[:, :, :target_width, :]  # Crop to exo_width
-            #! resize frames to (3, 784, 448)
-            frames = resize(frames, (784, 448))
+            frames = frames[:, :, :target_width, :]  # Crop to exo
+            frames = resize(frames, (height, target_width))
             return frames.float().permute(0, 3, 1, 2).contiguous()
         else:
             # Take first max_num_frames (no evenly downsampling)
             indices = list(range(max_num_frames))
             frames = video_reader.get_batch(indices)
             frames = frames.float()
-            frames = frames[:, :, :target_width, :]  # Crop to exo_width
-            frames = resize(frames, (784, 448))
+            frames = frames[:, :, :target_width, :]
+            frames = resize(frames, (height, target_width))
             frames = frames.permute(0, 3, 1, 2).contiguous()
             return frames
 
     elif video_type == "ego_gt_GGA":
-        height = 448
-        width = 796 + 448
         target_width = width - height  # exo_width
         video_reader = decord.VideoReader(uri=video_path.as_posix(), width=width, height=height)
         video_num_frames = len(video_reader)
@@ -282,14 +277,14 @@ def preprocess_video_with_resize(
             num_repeats = max_num_frames - video_num_frames
             repeated_frames = last_frame.repeat(num_repeats, 1, 1, 1)
             frames = torch.cat([frames, repeated_frames], dim=0)
-            frames = frames[:, :, target_width:, :]  # Crop to exo_width
+            frames = frames[:, :, target_width:, :]  # Crop to ego
             return frames.float().permute(0, 3, 1, 2).contiguous()
         else:
             # Take first max_num_frames (no evenly downsampling)
             indices = list(range(max_num_frames))
             frames = video_reader.get_batch(indices)
             frames = frames.float()
-            frames = frames[:, :, target_width:, :]  # Crop to exo_width
+            frames = frames[:, :, target_width:, :]  # Crop
             frames = frames.permute(0, 3, 1, 2).contiguous()
             return frames
 

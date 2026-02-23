@@ -115,7 +115,7 @@ class WanWidthConcatImageToVideoPipeline(WanImageToVideoPipeline):
         num_channels_latents: int = 16,
         height: int = 480,
         exo_width: int = 784,
-        ego_width: int = 448, 
+        ego_width: int = 448,
         num_frames: int = 49,
         dtype: Optional[torch.dtype] = None,
         device: Optional[torch.device] = None,
@@ -227,8 +227,8 @@ class WanWidthConcatImageToVideoPipeline(WanImageToVideoPipeline):
         num_latent_frames = (num_frames - 1) // self.vae_scale_factor_temporal + 1
         num_channels_latents = self.vae.config.z_dim
         
-        # Actual ego = 448 pixels -> 56 latents  
-        ego_pixel_width = 448
+        # ego_width must match prepare_latents convention (ego_width = height)
+        ego_pixel_width = height
         ego_latent_width = ego_pixel_width // self.vae_scale_factor_spatial
         
         batch_size = batch_size * num_videos_per_prompt # prepare_latent에서 bsz를 이렇게 넘기고 있음
@@ -881,10 +881,11 @@ class WanI2VSftTrainer(Trainer):
         
         mask_lat_size = torch.ones(latent_condition.shape[0], 1, actual_num_frames, latent_condition.shape[3], latent_condition.shape[4])
         
-        exo_width, ego_width = 784, 448 #! HARD CODING
-        vae_scale_factor_spatial = 2 ** len(self.components.vae.config.temperal_downsample) # 8
-        exo_latent_width = exo_width // vae_scale_factor_spatial  
-        ego_latent_width = ego_width // vae_scale_factor_spatial
+        # Derive exo/ego split from latent shape (same convention as pipeline: ego_width = height)
+        latent_height = latent.shape[-2]
+        latent_width_total = latent.shape[-1]
+        ego_latent_width = latent_height
+        exo_latent_width = latent_width_total - ego_latent_width
         # Set exo_view mask (left part) to 1.0
         mask_lat_size[:, :, :, :, :exo_latent_width] = 1.0
         # Set ego_view mask (right part) to 0.0  

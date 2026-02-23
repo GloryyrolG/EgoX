@@ -70,10 +70,13 @@ def main(args):
     from core.finetune.models.wan_i2v.sft_trainer import WanWidthConcatImageToVideoPipeline
     pipe = WanWidthConcatImageToVideoPipeline.from_pretrained(model_path, image_encoder=image_encoder, transformer=transformer, torch_dtype=dtype)
     
+    print(f"[infer] base model: {model_path}")
     if lora_path:
-        print('loading lora')
+        print(f"[infer] loading LoRA from: {os.path.abspath(lora_path)}")
         pipe.load_lora_weights(lora_path, weight_name="pytorch_lora_weights.safetensors")
         pipe.fuse_lora(components=["transformer"], lora_scale = 1.0 )
+    else:
+        print("[infer] no LoRA (using base model only)")
 
     pipe.to("cuda")
 
@@ -81,7 +84,7 @@ def main(args):
     for i in range(len(prompts)):
         if i!=args.idx and args.idx!=-1:
             continue
-        if args.start_idx != -1 and args.end_idx != 1:
+        if args.start_idx != -1 and args.end_idx != -1:
             if i < args.start_idx or i >= args.end_idx :
                 continue
         prompt, exo_video_path, ego_prior_video_path = prompts[i], exo_videos[i], ego_prior_videos[i]
@@ -98,16 +101,31 @@ def main(args):
             camera_extrinsic = camera_extrinsics[i]
             ego_extrinsic = ego_extrinsics[i]
             ego_intrinsic = ego_intrinsics[i]
-
             device = 'cpu'
 
-            C, F, H, W = 16, 13, 56, 154 #! Hard coding
+            vae_cfg = pipe.vae.config
+            vae_scale_factor_temporal = 2 ** sum(vae_cfg.temperal_downsample)
+            vae_scale_factor_spatial = 2 ** len(vae_cfg.temperal_downsample)
+            exo_width = args.width - args.height
+            ego_width = args.height
+            num_latent_frames = (args.num_frames - 1) // vae_scale_factor_temporal + 1
+            latent_height = args.height // vae_scale_factor_spatial
+            exo_latent_width = exo_width // vae_scale_factor_spatial
+            ego_latent_width = ego_width // vae_scale_factor_spatial
+            total_latent_width = exo_latent_width + ego_latent_width
+            C = 16
+            F = num_latent_frames
+            H = latent_height
+            W = total_latent_width
+
             exo_H, exo_W = H, W - H
             W = H
 
+            all_depth_files = sorted(depth_map_path.glob("*.npy"))
+            sampled_indices = list(range(0, len(all_depth_files), vae_scale_factor_temporal))[:F]
             depth_maps = []
-            for depth_map_file in sorted(depth_map_path.glob("*.npy")):
-                depth_map = np.load(depth_map_file)
+            for idx in sampled_indices:
+                depth_map = np.load(all_depth_files[idx])
                 depth_maps.append(torch.from_numpy(depth_map).unsqueeze(0))
             depth_maps = torch.cat(depth_maps, dim=0) # [F, H, W]
 
@@ -116,19 +134,21 @@ def main(args):
             camera_extrinsic=torch.tensor(camera_extrinsic)     #! (3,4)
             camera_intrinsic=torch.tensor(camera_intrinsic)     #! (3,3)
 
+            ego_extrinsic = ego_extrinsic[::vae_scale_factor_temporal][:F]
+
             if ego_extrinsic.shape[1] == 3 and ego_extrinsic.shape[2] == 4:
                 ego_extrinsic = torch.cat([ego_extrinsic, torch.tensor([[[0, 0, 0, 1]]], dtype=ego_extrinsic.dtype).expand(ego_extrinsic.shape[0], -1, -1)], dim=1)
             if camera_extrinsic.shape == (3, 4):
                 camera_extrinsic = torch.cat([torch.tensor(camera_extrinsic, dtype=ego_extrinsic.dtype), torch.tensor([[0, 0, 0, 1]], dtype=ego_extrinsic.dtype)], dim=0)
 
-            scale = 1/8
+            scale = 1.0 / vae_scale_factor_spatial
             scaled_intrinsic = ego_intrinsic.clone()
             scaled_intrinsic[0, 0] *= scale  # fx' = fx * s
             scaled_intrinsic[1, 1] *= scale  # fy' = fy * s
             scaled_intrinsic[0, 2] *= scale  # cx' = cx * s
             scaled_intrinsic[1, 2] *= scale
 
-            ys, xs = torch.meshgrid(torch.arange(H, device=device), torch.arange(W, device=device))
+            ys, xs = torch.meshgrid(torch.arange(H, device=device), torch.arange(W, device=device), indexing='ij')
             ones = torch.ones_like(xs)
             pixel_coords = torch.stack([xs, ys, ones], dim=-1).view(-1, 3).to(dtype=ego_intrinsic.dtype)  # (H*W, 3)
 
@@ -149,7 +169,7 @@ def main(args):
 
             cam_rays = cam_rays_fish / torch.norm(cam_rays_fish, dim=-1, keepdim=True)
 
-            cam_rays = cam_rays @ ego_extrinsic[::4, :3, :3]
+            cam_rays = cam_rays @ ego_extrinsic[:, :3, :3]
 
             cam_rays = cam_rays.view(F, H, W, 3)  # (B, H, W, 3)
 
@@ -203,27 +223,26 @@ def main(args):
             point_map_world = (camera_extrinsics_c2w @ point_map_world.T).T[...,:3]
             point_map = point_map_world.reshape(p_f, p_h, p_w, 3).permute(0, 3, 1, 2)
 
-            point_map = point_map[:, :, (point_map.shape[2] - 448)//2:(point_map.shape[2] + 448)//2, (point_map.shape[3] - 784)//2:(point_map.shape[3] + 784)//2] #! [F, 3, 448, 784]
+            # point_map = point_map[:, :, (point_map.shape[2] - 448)//2:(point_map.shape[2] + 448)//2, (point_map.shape[3] - 784)//2:(point_map.shape[3] + 784)//2] #! [F, 3, 448, 784]
             point_map = torch.nn.functional.interpolate(point_map, size=(exo_H, exo_W), mode='bilinear', align_corners=False).permute(0, 2, 3, 1) #! [B, H, W, 3]
 
             ego_extrinsic_c2w = torch.linalg.inv(ego_extrinsic)
 
-            cam_origins = ego_extrinsic_c2w[::4, :3, 3].unsqueeze(1).expand(-1, exo_H * exo_W, -1)  # (B, H*W, 3)
+            cam_origins = ego_extrinsic_c2w[:, :3, 3].unsqueeze(1).expand(-1, exo_H * exo_W, -1)  # (B, H*W, 3)
             cam_origins = cam_origins.view(F, exo_H, exo_W, 3)  # (B, H, W, 3)
 
             if point_map.size(0) != ego_extrinsic_c2w.size(0):
                 min_size = min(point_map.size(0), ego_extrinsic_c2w.size(0))
                 point_map = point_map[:min_size]
-            
 
             point_vecs_per_frame = []
             for j in range(cam_origins.size(0)):
-                point_vec = point_map[::4] - cam_origins[j].unsqueeze(0)  #! [B, H, W, 3]
+                point_vec = point_map - cam_origins[j].unsqueeze(0)  #! [B, H, W, 3]
                 point_vec = point_vec / torch.norm(point_vec, dim=-1, keepdim=True)  #! [B,H, W, 3]
                 point_vecs_per_frame.append(point_vec)
             point_vecs_per_frame = torch.stack(point_vecs_per_frame, dim=0)  #! [B, B, H, W, 3]
 
-            point_vecs = point_map[::4] - cam_origins #! [B, H, W, 3]
+            point_vecs = point_map - cam_origins #! [B, H, W, 3]
             point_vecs = point_vecs / torch.norm(point_vecs, dim=-1, keepdim=True) #! [B, H, W, 3]
 
             cam_rays = torch.rot90(cam_rays, k=-1, dims=[1, 2])
@@ -246,10 +265,10 @@ def main(args):
                 exo_video_path=exo_video_path,
                 ego_prior_video_path=ego_prior_video_path,
                 output_path=output_path,
-                num_frames=49,
-                width=784+448,
-                height=448,
-                num_inference_steps=50,
+                num_frames=args.num_frames,
+                width=args.width,
+                height=args.height,
+                num_inference_steps=args.num_inference_steps,
                 guidance_scale=5.0,
                 fps=30,
                 num_videos_per_prompt=1,
@@ -279,5 +298,9 @@ if __name__ == "__main__":
     parser.add_argument("--start_idx", type=int, default=-1)
     parser.add_argument("--end_idx", type=int, default=-1)
     parser.add_argument("--in_the_wild", action='store_true', help="whether to use in-the-wild inference")
+    parser.add_argument("--num_frames", type=int, default=49, help="Number of frames to generate (default: 49)")
+    parser.add_argument("--num_inference_steps", type=int, default=50, help="Denoising steps; use 5–10 for quick preview (default: 50)")
+    parser.add_argument("--height", type=int, default=448, help="Output height in pixels (default: 448)")
+    parser.add_argument("--width", type=int, default=1232, help="Total output width in pixels (exo + ego, default: 1232)")
     args = parser.parse_args()
     main(args)
