@@ -40,6 +40,7 @@ EXTRACT_FROM_TAR="${EXTRACT_FROM_TAR:-1}"
 TAR_EXTRACT_MODE="${TAR_EXTRACT_MODE:-partial}"
 TAR_SOURCE_DIR="${TAR_SOURCE_DIR:-$H2O_ROOT}"
 RUN_POST="${RUN_POST:-1}"
+EGOX_ENV="${EGOX_ENV:-egox-egopriorrenderer}"
 
 # Data/model path defaults (can override via env).
 MODEL_PATH="${MODEL_PATH:-/mnt/shared/ckpts/egox/pretrained_model/Wan2.1-I2V-14B-480P-Diffusers}"
@@ -58,6 +59,7 @@ if [[ "$RUN_PREPROCESS" == "1" ]]; then
     TAR_EXTRACT_MODE="$TAR_EXTRACT_MODE" \
     TAR_SOURCE_DIR="$TAR_SOURCE_DIR" \
     RUN_POST="$RUN_POST" \
+    EGOX_ENV="$EGOX_ENV" \
     bash "$PREPROCESS_SCRIPT" "$H2O_SCENE" "$H2O_SEQUENCE" "$H2O_EXO_CAM" "$H2O_STRATEGY" "$H2O_SUBJECT"
 fi
 
