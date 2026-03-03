@@ -94,16 +94,43 @@ class BaseWanDataset(Dataset):
         for meta in meta_list:
             # Field names: infer/README use exo_path, ego_prior_path; legacy uses exo_video_path, ego_video_path; H2O uses ego_path
             exo_path_str = meta.get("exo_video_path") or meta.get("exo_path")
+            take_name = meta.get("take_name")
+            if take_name is None and exo_path_str:
+                # Extract take_name from exo_path: .../videos/<take>/exo.mp4 -> <take>
+                take_name = Path(exo_path_str).parent.name
+
+            video_dir = (data_root / "videos" / take_name) if take_name is not None else None
+
+            def resolve_video_path(primary, fallback_filename=None, extra_candidates=None):
+                candidates = []
+                if primary:
+                    candidates.append(Path(primary))
+                if extra_candidates:
+                    candidates.extend(Path(p) for p in extra_candidates if p)
+                if video_dir is not None and fallback_filename:
+                    candidates.append(video_dir / fallback_filename)
+                for p in candidates:
+                    if p.is_file():
+                        return p
+                return candidates[0] if candidates else None
+
             ego_gt_path_str = (
-                meta.get("ego_video_path") or meta.get("ego_path") or exo_path_str.replace("exo", "ego")
+                meta.get("ego_video_path") or meta.get("ego_path") or (exo_path_str.replace("exo", "ego") if exo_path_str else None)
             )  # fallback to prior when no GT
 
-            self.exo_videos.append(Path(exo_path_str))
-            self.ego_gt_videos.append(Path(ego_gt_path_str))
-            self.ego_prior_videos.append(Path(meta["ego_prior_path"]))
+            exo_path = resolve_video_path(exo_path_str, fallback_filename="exo.mp4")
+            ego_gt_path = resolve_video_path(ego_gt_path_str, fallback_filename="ego.mp4")
+            ego_prior_path = resolve_video_path(
+                meta.get("ego_prior_path"),
+                fallback_filename="ego_Prior.mp4",
+                extra_candidates=[(video_dir / "exo_Prior.mp4") if video_dir is not None else None],
+            )
+
+            self.exo_videos.append(exo_path)
+            self.ego_gt_videos.append(ego_gt_path)
+            self.ego_prior_videos.append(ego_prior_path)
             self.prompts.append(meta["prompt"])
 
-            take_name = meta.get("take_name")
             if take_name is not None:
                 self.depth_map_paths.append(Path(os.path.join(data_root, "depth_maps", take_name)))
             else:
@@ -118,9 +145,27 @@ class BaseWanDataset(Dataset):
             # - Used with iproj_disp() to convert depth maps to 3D point clouds for GGA attention
             # exo_path: ./EgoX-EgoPriorRenderer/processed/h2o/videos/subject1_h1_0_cam0/exo.mp4
             # vs. vipe_path: ./EgoX-EgoPriorRenderer/vipe_results/subject1_h1_0_cam0/
-            vipe_path = meta.get("vipe_results_path") or Path('./EgoX-EgoPriorRenderer/vipe_results') / take_name
-            best_camera = meta.get("best_camera", "exo")
-            self.depth_intrinsics.append(Path(os.path.join(vipe_path, "intrinsics", best_camera + ".npz")))
+            vipe_path = meta.get("vipe_results_path")
+            if vipe_path:
+                vipe_path = Path(vipe_path)
+            if not vipe_path or not vipe_path.exists():
+                # H2O/Ego2Exo small-run metas may carry stale absolute paths.
+                # Prefer paths relative to current training data_root.
+                vipe_path = data_root / "vipe_results" / take_name
+            intrinsics_dir = Path(vipe_path) / "intrinsics"
+            best_camera = meta.get("best_camera")
+            candidates = [best_camera, "ego", "exo"] if best_camera else ["ego", "exo"]
+            depth_intrinsics_path = None
+            for camera_id in candidates:
+                candidate_path = intrinsics_dir / f"{camera_id}.npz"
+                if candidate_path.is_file():
+                    depth_intrinsics_path = candidate_path
+                    break
+            if depth_intrinsics_path is None:
+                # Keep a deterministic path for clearer downstream error if none exists.
+                fallback_name = best_camera or "ego"
+                depth_intrinsics_path = intrinsics_dir / f"{fallback_name}.npz"
+            self.depth_intrinsics.append(depth_intrinsics_path)
 
             self.camera_extrinsics.append(meta["camera_extrinsics"])
             self.camera_intrinsics.append(meta["camera_intrinsics"])
@@ -323,7 +368,10 @@ class BaseWanDataset(Dataset):
                 vae_scale_factor_temporal = 2 ** sum(self.trainer.components.vae.config.temperal_downsample)
                 vae_scale_factor_spatial = 2 ** len(self.trainer.components.vae.config.temperal_downsample)
                 # Load only required depth map files: sample by temporal scale, take first F frames
-                all_depth_files = sorted(depth_map_path.glob("*.npy"))
+                all_depth_files = sorted(p for p in depth_map_path.glob("*.npy") if p.is_file())
+                if len(all_depth_files) == 0:
+                    # ego2exo preprocessing stores depth maps under depth_maps/<take>/ego/.
+                    all_depth_files = sorted(p for p in (depth_map_path / "ego").glob("*.npy") if p.is_file())
                 sampled_indices = list(range(0, len(all_depth_files), vae_scale_factor_temporal))[:F]
                 depth_maps = []
                 for idx in sampled_indices:

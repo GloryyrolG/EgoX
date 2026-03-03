@@ -25,6 +25,47 @@ export MASTER_PORT=29501
 export NNODES=1
 export NUM_PROCESSES=1
 
+# Optional one-shot upstream: untar + process H2O before finetune.
+RUN_PREPROCESS="${RUN_PREPROCESS:-1}"
+PREPROCESS_SCRIPT="${PREPROCESS_SCRIPT:-./EgoX-EgoPriorRenderer/data_preprocess/scripts/process_h2o_batch.sh}"
+H2O_SCENE="${H2O_SCENE:-h1}"
+H2O_SEQUENCE="${H2O_SEQUENCE:-0}"
+H2O_EXO_CAM="${H2O_EXO_CAM:-cam0}"
+H2O_STRATEGY="${H2O_STRATEGY:-single}"
+H2O_SUBJECT="${H2O_SUBJECT:-subject1}"
+H2O_ROOT="${H2O_ROOT:-/mnt/shared/dses/h2o}"
+TEXT_ROOT="${TEXT_ROOT:-/mnt/shared/dses/egoworld/h2o/text}"
+OUTPUT_ROOT="${OUTPUT_ROOT:-/mnt/shared/dses/egox/h2o_batch}"
+EXTRACT_FROM_TAR="${EXTRACT_FROM_TAR:-1}"
+TAR_EXTRACT_MODE="${TAR_EXTRACT_MODE:-partial}"
+TAR_SOURCE_DIR="${TAR_SOURCE_DIR:-$H2O_ROOT}"
+RUN_POST="${RUN_POST:-1}"
+
+# Data/model path defaults (can override via env).
+MODEL_PATH="${MODEL_PATH:-/mnt/shared/ckpts/egox/pretrained_model/Wan2.1-I2V-14B-480P-Diffusers}"
+DATA_ROOT="${DATA_ROOT:-$OUTPUT_ROOT}"
+META_DATA_FILE="${META_DATA_FILE:-$OUTPUT_ROOT/meta.json}"
+CLEAR_CACHE_BEFORE_TRAIN="${CLEAR_CACHE_BEFORE_TRAIN:-1}"
+PIN_MEMORY="${PIN_MEMORY:-True}"
+MIXED_PRECISION="${MIXED_PRECISION:-bf16}"
+
+if [[ "$RUN_PREPROCESS" == "1" ]]; then
+    echo "Running preprocess: subject=$H2O_SUBJECT scene=$H2O_SCENE seq=$H2O_SEQUENCE cam=$H2O_EXO_CAM strategy=$H2O_STRATEGY"
+    H2O_ROOT="$H2O_ROOT" \
+    TEXT_ROOT="$TEXT_ROOT" \
+    OUTPUT_ROOT="$OUTPUT_ROOT" \
+    EXTRACT_FROM_TAR="$EXTRACT_FROM_TAR" \
+    TAR_EXTRACT_MODE="$TAR_EXTRACT_MODE" \
+    TAR_SOURCE_DIR="$TAR_SOURCE_DIR" \
+    RUN_POST="$RUN_POST" \
+    bash "$PREPROCESS_SCRIPT" "$H2O_SCENE" "$H2O_SEQUENCE" "$H2O_EXO_CAM" "$H2O_STRATEGY" "$H2O_SUBJECT"
+fi
+
+if [[ "$CLEAR_CACHE_BEFORE_TRAIN" == "1" ]]; then
+    echo "Clearing cache: $DATA_ROOT/cache"
+    rm -rf "$DATA_ROOT/cache"
+fi
+
 # 快速 overfit 验证预设：小 resolution + 小 rank + 少步数，省时间
 if [ "${FAST_OVERFIT}" = "1" ]; then
     export TRAIN_RESOLUTION="${TRAIN_RESOLUTION:-25x128x352}"
@@ -78,7 +119,7 @@ LAUNCHER="accelerate launch \
     --num_machines $NNODES"
 
 PROGRAM="finetune.py \
-    --model_path ./checkpoints/pretrained_model/Wan2.1-I2V-14B-480P-Diffusers \
+    --model_path $MODEL_PATH \
     --model_name wan-i2v \
     --model_type wan-i2v \
     --training_type lora \
@@ -86,17 +127,17 @@ PROGRAM="finetune.py \
     --lora_alpha $LORA_ALPHA \
     --output_dir $OUTPUT_DIR \
     --report_to tensorboard \
-    --data_root ./EgoX-EgoPriorRenderer/processed \
-    --meta_data_file ./EgoX-EgoPriorRenderer/processed/h2o/meta.json \
+    --data_root $DATA_ROOT \
+    --meta_data_file $META_DATA_FILE \
     --train_resolution $TRAIN_RESOLUTION \
     --train_epochs 1 \
     --train_steps $TRAIN_STEPS \
     --seed 42 \
     --batch_size 1 \
     --gradient_accumulation_steps 1 \
-    --mixed_precision bf16 \
+    --mixed_precision $MIXED_PRECISION \
     --num_workers $NUM_WORKERS \
-    --pin_memory True \
+    --pin_memory $PIN_MEMORY \
     --nccl_timeout 1800 \
     --checkpointing_steps $CHECKPOINTING_STEPS \
     --checkpointing_limit 10 \
