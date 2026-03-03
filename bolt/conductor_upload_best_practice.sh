@@ -12,6 +12,11 @@ SETUP_SCRIPT="/mnt/task_runtime/bolt/set_conductor_env.sh"
 S3ZIP_BIN="${S3ZIP_BIN:-/miniforge/bin/s3zip}"
 DRY_RUN="${DRY_RUN:-0}"
 ARCHIVE_STRATEGY="${ARCHIVE_STRATEGY:-single}" # single | topdir
+TRACE="${TRACE:-0}" # set to 1 to enable bash xtrace (-x), aligned with docs guidance
+
+if [[ "$TRACE" == "1" ]]; then
+  set -x
+fi
 
 run_cmd() {
   if [[ "$DRY_RUN" == "1" ]]; then
@@ -139,6 +144,9 @@ LARGE_COUNT="$(wc -l <"$WORKDIR/large_files.txt" | tr -d ' ')"
 echo "  small_files(<=${SMALL_THRESHOLD_MB}MB): $SMALL_COUNT"
 echo "  large_files(>${SMALL_THRESHOLD_MB}MB):  $LARGE_COUNT"
 echo "  archive strategy: $ARCHIVE_STRATEGY"
+if [[ "$SMALL_COUNT" -ge 10000 && "$ARCHIVE_STRATEGY" == "single" ]]; then
+  echo "  WARN: many small files detected; consider ARCHIVE_STRATEGY=topdir for grouped compression"
+fi
 
 TS="$(date +%Y%m%d_%H%M%S)"
 
