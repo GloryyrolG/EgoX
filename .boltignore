@@ -1,0 +1,9 @@
+example/
+EgoX-EgoPriorRenderer/
+__pycache__/
+*.pyc
+*.pth
+*.pkl
+*.bin
+*.ckpt
+.git/

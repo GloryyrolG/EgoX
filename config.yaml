@@ -1,0 +1,43 @@
+name: EgoX-Training
+
+setup_command: >
+  . /etc/profile.d/conda.sh;
+  conda activate iris &&
+  cd bolt &&
+  bash update_env.sh &&
+  source set_conductor_env.sh &&
+  bash setup.sh
+command: >
+  . /etc/profile.d/conda.sh;
+  conda activate iris &&
+# python run.py
+
+priority: 1
+
+resources:
+  docker_image: docker.apple.com/iris/iris:latest  # check https://bolt.apple.com/images
+  task_type: 2gpu
+  cluster: ['aws_4', 'aws_5', 'gcp_4', 'gcp_5']
+  timeout: 14d
+  num_cpus: 24
+  disk_gb: 1000
+
+  scratch_file_system:
+    size_gb: 1500              # 1.5TB 共享存储
+    num_replicas: 3            # 3 副本（高可用，防止节点故障）
+    mount_path: /mnt/shared    # 挂载路径（默认值）
+
+# description: learn to run pytorch on Bolt
+
+# tags: ['bolt-samples']
+
+# parameters:
+#   epochs: 100
+#   learning_rate: 0.001
+#   momentum: 0.9
+
+# trove:
+#   images:
+#     # Ensure user has agreed to the terms of use of Trove objects.
+#     # See https://bolt.apple.com/docs/data.html#using-turi-trove for more information
+#     uri: dataset/CLEVR@1.0.0
