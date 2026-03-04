@@ -259,3 +259,25 @@ If you use this dataset or code in your research, please cite our paper:
       url={https://arxiv.org/abs/2512.08269}, 
 }
 ```
+
+## Codex Session Persistence
+
+If you use Codex in this repo and want sessions to survive local resets, persist
+`~/.codex/sessions` to shared storage (`/mnt/shared`):
+
+```bash
+# Preview changes
+bash scripts/persist_codex_sessions.sh --dry-run
+
+# Apply once
+bash scripts/persist_codex_sessions.sh
+
+# Verify anytime
+bash scripts/persist_codex_sessions.sh --check
+```
+
+Optional custom target path:
+
+```bash
+bash scripts/persist_codex_sessions.sh --target /mnt/shared/your-name/codex/sessions
+```
