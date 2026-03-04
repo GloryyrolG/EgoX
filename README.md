@@ -57,6 +57,24 @@ pip3 install torch torchvision --index-url https://download.pytorch.org/whl/cu12
 pip install -r requirements.txt
 ```
 
+### One-Click Setup (Bolt)
+
+Use the unified setup entrypoint under `bolt/`:
+
+```bash
+# Full setup: env + codex persistence
+bash bolt/setup.sh all
+
+# Setup env only
+bash bolt/setup.sh env
+
+# Setup codex persistence only
+bash bolt/setup.sh codex
+
+# Check both env + codex state
+bash bolt/setup.sh check
+```
+
 ## 📥 Model Weights Download
 
 ### 💾 Wan2.1-I2V-14B Pretrained Model
