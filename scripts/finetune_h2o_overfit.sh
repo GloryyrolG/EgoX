@@ -18,7 +18,15 @@
 set -e
 export TOKENIZERS_PARALLELISM=false
 source "$(conda info --base)/etc/profile.d/conda.sh"
-conda activate egox
+CONDA_ENV="${CONDA_ENV:-egox}"
+if conda activate "$CONDA_ENV" 2>/dev/null; then
+    :
+elif [[ -d "/mnt/shared/envs/$CONDA_ENV" ]]; then
+    conda activate "/mnt/shared/envs/$CONDA_ENV"
+else
+    echo "ERROR: cannot activate conda env '$CONDA_ENV' (name or /mnt/shared/envs/$CONDA_ENV)" >&2
+    exit 1
+fi
 
 export MASTER_ADDR=localhost
 export MASTER_PORT=29501
@@ -41,6 +49,7 @@ TAR_EXTRACT_MODE="${TAR_EXTRACT_MODE:-partial}"
 TAR_SOURCE_DIR="${TAR_SOURCE_DIR:-$H2O_ROOT}"
 RUN_POST="${RUN_POST:-1}"
 EGOX_ENV="${EGOX_ENV:-egox-egopriorrenderer}"
+VIPE_PIPELINE="${VIPE_PIPELINE:-lyra}"
 
 # Data/model path defaults (can override via env).
 MODEL_PATH="${MODEL_PATH:-/mnt/shared/ckpts/egox/pretrained_model/Wan2.1-I2V-14B-480P-Diffusers}"
@@ -60,6 +69,7 @@ if [[ "$RUN_PREPROCESS" == "1" ]]; then
     TAR_SOURCE_DIR="$TAR_SOURCE_DIR" \
     RUN_POST="$RUN_POST" \
     EGOX_ENV="$EGOX_ENV" \
+    VIPE_PIPELINE="$VIPE_PIPELINE" \
     bash "$PREPROCESS_SCRIPT" "$H2O_SCENE" "$H2O_SEQUENCE" "$H2O_EXO_CAM" "$H2O_STRATEGY" "$H2O_SUBJECT"
 fi
 
