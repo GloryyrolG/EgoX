@@ -262,22 +262,23 @@ If you use this dataset or code in your research, please cite our paper:
 
 ## Codex Session Persistence
 
-If you use Codex in this repo and want sessions to survive local resets, persist
-`~/.codex/sessions` to shared storage (`/mnt/shared`):
+If you use Codex in this repo and want local resets to be non-disruptive, persist
+core `~/.codex` state to shared storage (`/mnt/shared`). The script handles:
+`sessions/`, `auth.json`, `models_cache.json`, and `state_*.sqlite*`.
 
 ```bash
 # Preview changes
-bash scripts/persist_codex_sessions.sh --dry-run
+bash bolt/persist_codex_sessions.sh --dry-run
 
 # Apply once
-bash scripts/persist_codex_sessions.sh
+bash bolt/persist_codex_sessions.sh
 
 # Verify anytime
-bash scripts/persist_codex_sessions.sh --check
+bash bolt/persist_codex_sessions.sh --check
 ```
 
 Optional custom target path:
 
 ```bash
-bash scripts/persist_codex_sessions.sh --target /mnt/shared/your-name/codex/sessions
+bash bolt/persist_codex_sessions.sh --target /mnt/shared/your-name/codex/sessions
 ```
