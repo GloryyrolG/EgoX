@@ -25,6 +25,7 @@ fi
 echo "[2/6] Install EgoX deps"
 "$EGOX_ENV/bin/pip" install torch torchvision --index-url https://download.pytorch.org/whl/cu121
 "$EGOX_ENV/bin/pip" install -r "$ROOT_DIR/requirements.txt"
+"$EGOX_ENV/bin/pip" install tensorboard
 
 echo "[3/6] Create EgoPrior env: $EGO_PRIOR_ENV"
 if [ ! -d "$EGO_PRIOR_ENV" ]; then
@@ -50,7 +51,8 @@ export CPATH="$CUDA_INCLUDE_DIR:${CPATH:-}"
 echo "[6/6] Verify imports"
 "$EGOX_ENV/bin/python" - <<'PY'
 import torch, torchvision, diffusers, transformers, deepspeed
-print("EgoX OK:", torch.__version__, torchvision.__version__)
+from torch.utils.tensorboard import SummaryWriter
+print("EgoX OK:", torch.__version__, torchvision.__version__, "tensorboard", SummaryWriter.__name__)
 PY
 
 "$EGO_PRIOR_ENV/bin/python" - <<'PY'
