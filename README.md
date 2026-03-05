@@ -300,3 +300,21 @@ Optional custom target path:
 ```bash
 bash bolt/persist_codex_sessions.sh --target /mnt/shared/your-name/codex/sessions
 ```
+
+## Codex Auto Load + Persistence Check
+
+Use one command to verify/fix `~/.codex/sessions` persistence and auto resume latest session:
+
+```bash
+bash bolt/codex_autoload.sh
+```
+
+Useful flags:
+
+```bash
+# Only verify persistence status
+bash bolt/codex_autoload.sh --check
+
+# Verify/fix persistence only, do not launch codex
+bash bolt/codex_autoload.sh --no-start
+```
